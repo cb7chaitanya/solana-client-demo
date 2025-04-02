@@ -7,10 +7,9 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Loader2 } from "lucide-react";
-import axios from 'axios';
 
 const Hero: FC = () => {
-    const { publicKey, connected, signTransaction } = useWallet();
+    const { publicKey, connected, sendTransaction } = useWallet();
     const [balance, setBalance] = useState<number | null>(null);
     const [loading, setLoading] = useState(false);
     const [status, setStatus] = useState('');
@@ -35,44 +34,6 @@ const Hero: FC = () => {
         } finally {
             setLoading(false);
         }
-    };
-
-    const getLatestBlockhash = async (connection: Connection) => {
-        const response = await axios.post(connection.rpcEndpoint, {
-            jsonrpc: '2.0',
-            id: '1',
-            method: 'getLatestBlockhash',
-            params: [{
-                commitment: 'processed',
-                minContextSlot: 1000
-            }]
-        }, {
-            headers: { 'Content-Type': 'application/json' }
-        });
-
-        return response.data.result.value;
-    };
-
-    const sendTransaction = async (transaction: Transaction, connection: Connection) => {
-        if (!signTransaction) throw new Error('Wallet not connected');
-
-        const { blockhash } = await getLatestBlockhash(connection);
-        transaction.recentBlockhash = blockhash;
-
-        const signedTx = await signTransaction(transaction);
-        const serializedTx = signedTx.serialize();
-        const base64Tx = serializedTx.toString('base64');
-
-        const response = await axios.post(connection.rpcEndpoint, {
-            jsonrpc: '2.0',
-            id: 1,
-            method: 'sendTransaction',
-            params: [base64Tx]
-        }, {
-            headers: { 'Content-Type': 'application/json' }
-        });
-
-        return response.data.result;
     };
 
     const requestAirdrop = async () => {
@@ -119,7 +80,7 @@ const Hero: FC = () => {
     };
 
     const handleTransfer = async () => {
-        if (!publicKey || !recipient || !amount || !signTransaction) return;
+        if (!publicKey || !recipient || !amount || !sendTransaction) return;
         
         try {
             setLoading(true);
@@ -134,11 +95,16 @@ const Hero: FC = () => {
                 })
             );
 
-            transaction.feePayer = publicKey;
-
             setStatus('Please approve the transaction...');
             const signature = await sendTransaction(transaction, connection);
-            await new Promise(resolve => setTimeout(resolve, 5000));
+            
+            // Wait for confirmation
+            const latestBlockhash = await connection.getLatestBlockhash();
+            await connection.confirmTransaction({
+                signature,
+                ...latestBlockhash
+            });
+
             setStatus(`Transfer successful! ${amount} SOL sent to ${recipient} at https://solscan.io/tx/${signature}`);
             await checkBalance();
         } catch (error: any) {
